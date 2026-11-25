@@ -257,12 +257,12 @@
     var yr = yRange(win[0], win[1]);
     var common = {
       type: "scatter", mode: "lines+markers", connectgaps: false, x: data.x,
-      marker: { size: 4 }, line: { width: 2.2 },
+      marker: { size: 4 }, line: { shape: "spline", smoothing: 1, width: 2.2 },
       hovertemplate: "₹%{y:,.0f}<extra>%{fullData.name}</extra>"
     };
     var traces = [
-      Object.assign({}, common, { name: "24ct", y: data.y24, line: { width: 2.2, color: css("--c24") }, marker: { size: 4, color: css("--c24") } }),
-      Object.assign({}, common, { name: "22ct", y: data.y22, line: { width: 2.2, color: css("--c22") }, marker: { size: 4, color: css("--c22") } })
+      Object.assign({}, common, { name: "24ct", y: data.y24, line: { shape: "spline", smoothing: 1, width: 2.2, color: css("--c24") }, marker: { size: 4, color: css("--c24") } }),
+      Object.assign({}, common, { name: "22ct", y: data.y22, line: { shape: "spline", smoothing: 1, width: 2.2, color: css("--c22") }, marker: { size: 4, color: css("--c22") } })
     ];
     var layout = {
       margin: { l: 64, r: 16, t: 8, b: 40 },
