@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gold Rate Tracker</title>
+<meta name="description" content="Interactive chart of 24ct and 22ct gold rates collected from pngjewellers.com.">
+<style>
+  :root {
+    --bg: #fafaf7;
+    --surface: #ffffff;
+    --text: #1f2328;
+    --muted: #5d6670;
+    --border: #dcdfe3;
+    --grid: #ebedf0;
+    --accent: #8a5a00;
+    --c24: #b07900;
+    --c22: #1f6fb0;
+    --up: #17783a;
+    --down: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --surface: #1c1f24;
+      --text: #e8eaed;
+      --muted: #9aa3ad;
+      --border: #333840;
+      --grid: #2a2e35;
+      --accent: #f0b43c;
+      --c24: #f0b43c;
+      --c22: #6cb4ee;
+      --up: #4cc27a;
+      --down: #ff7b72;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 1000px; margin: 0 auto; padding: 24px 16px 40px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: .9rem; }
+  .sub a { color: inherit; }
+
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px; }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    border-top: 3px solid var(--swatch);
+  }
+  .stat.c24 { --swatch: var(--c24); }
+  .stat.c22 { --swatch: var(--c22); }
+  .stat .label { font-size: .8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat .value { font-size: 1.7rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat .delta { font-size: .9rem; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .delta .up { color: var(--up); font-weight: 600; }
+  .delta .down { color: var(--down); font-weight: 600; }
+
+  .periods { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .periods span { color: var(--muted); font-size: .85rem; margin-right: 4px; }
+  .periods button {
+    font: inherit; font-size: .9rem;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 14px; min-height: 36px; cursor: pointer;
+  }
+  .periods button:hover { border-color: var(--accent); }
+  .periods button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+  .periods button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  #chart-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px;
+    position: relative;
+  }
+  #chart { width: 100%; height: 480px; }
+  #status { padding: 40px 16px; text-align: center; color: var(--muted); }
+  #status.error { color: var(--down); }
+  .hint { color: var(--muted); font-size: .8rem; margin-top: 8px; }
+  @media (max-width: 520px) {
+    #chart { height: 400px; }
+    .stat .value { font-size: 1.35rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gold Rate Tracker</h1>
+  <p class="sub">24ct and 22ct rates (₹) from pngjewellers.com. <span id="asof"></span></p>
+
+  <section class="stats" aria-live="polite" aria-label="Latest rates">
+    <div class="stat c24"><div class="label">24ct</div><div class="value" id="v24">–</div><div class="delta" id="d24">&nbsp;</div></div>
+    <div class="stat c22"><div class="label">22ct</div><div class="value" id="v22">–</div><div class="delta" id="d22">&nbsp;</div></div>
+  </section>
+
+  <div class="periods" id="periods" role="group" aria-label="Chart period">
+    <span>Period</span>
+    <button type="button" data-p="10d" aria-pressed="true">10 days</button>
+    <button type="button" data-p="1m" aria-pressed="false">1 month</button>
+    <button type="button" data-p="3m" aria-pressed="false">3 months</button>
+    <button type="button" data-p="ytd" aria-pressed="false">Year to date</button>
+    <button type="button" data-p="all" aria-pressed="false">All</button>
+  </div>
+
+  <div id="chart-wrap">
+    <div id="status">Loading rates…</div>
+    <div id="chart" hidden></div>
+  </div>
+  <p class="hint">Drag on the chart to zoom, drag the slider below it to pan, double-click to reset to all data.</p>
+</main>
+
+<script src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js" integrity="sha384-wQ3lfCxuvLfhHGiSdHF5+e3NZ1zNwEMd8/nII+K7VKChF9llO/OwOcn/aVRkB7az" crossorigin="anonymous"></script>
+<script>
+(function () {
+  "use strict";
+
+  // Tried in order. The raw URL is always current (no Pages rebuild needed) but only
+  // reachable from a browser if the repo is public; the relative path is the fallback.
+  var CSV_SOURCES = [
+    "https://raw.githubusercontent.com/syamchandnair/goldie/main/gold_rates.csv",
+    "gold_rates.csv"
+  ];
+  var DEFAULT_PERIOD = "10d";
+  var DAY = 86400000;
+
+  var el = function (id) { return document.getElementById(id); };
+  var fmtINR = new Intl.NumberFormat("en-IN");
+  var fmtShort = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  var fmtLong = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
+
+  var data = { t: [], x: [], y24: [], y22: [] };   // t = ms (IST wall-clock treated as UTC), x = "YYYY-MM-DD HH:MM:SS"
+  var chartDiv = el("chart");
+  var internalUpdate = false;                       // true while we call relayout ourselves
+
+  // ---------- data ----------
+  function toStr(ms) { return new Date(ms).toISOString().slice(0, 19).replace("T", " "); }
+
+  function parseCSV(text) {
+    var out = { t: [], x: [], y24: [], y22: [] };
+    var lines = text.split(/\r?\n/);
+    for (var i = 1; i < lines.length; i++) {          // line 0 is the header
+      var line = lines[i].trim();
+      if (!line) continue;
+      var f = line.split(",");
+      // "2026-11-21 20:46:15 IST" -> wall-clock string; no timezone conversion on purpose
+      var ts = (f[0] || "").replace(/\s*IST\s*$/, "").trim();
+      var ms = Date.parse(ts.replace(" ", "T") + "Z");
+      if (isNaN(ms)) continue;
+      var a = parseFloat(f[1]), b = parseFloat(f[2]);  // "N/A" -> NaN -> gap
+      out.t.push(ms);
+      out.x.push(ts);
+      out.y24.push(isNaN(a) ? null : a);
+      out.y22.push(isNaN(b) ? null : b);
+    }
+    return out;
+  }
+
+  function load() {
+    var i = 0;
+    function next() {
+      if (i >= CSV_SOURCES.length) return Promise.reject(new Error("Could not load gold_rates.csv"));
+      var url = CSV_SOURCES[i++];
+      return fetch(url, { cache: "no-cache" })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+        .then(function (txt) {
+          var d = parseCSV(txt);
+          if (!d.t.length) throw new Error("empty");
+          return d;
+        })
+        .catch(next);
+    }
+    return next();
+  }
+
+  // ---------- helpers on the visible window ----------
+  function lastValid(arr) { for (var i = arr.length - 1; i >= 0; i--) if (arr[i] != null) return i; return -1; }
+
+  function windowFor(period) {
+    var end = data.t[data.t.length - 1], start = data.t[0];
+    var d = new Date(end);
+    if (period === "10d") start = end - 10 * DAY;
+    else if (period === "1m") start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
+    else if (period === "3m") start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 3, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
+    else if (period === "ytd") start = Date.UTC(d.getUTCFullYear(), 0, 1);
+    return [Math.max(start, data.t[0]), end];
+  }
+
+  function yRange(lo, hi) {
+    var min = Infinity, max = -Infinity;
+    for (var i = 0; i < data.t.length; i++) {
+      if (data.t[i] < lo || data.t[i] > hi) continue;
+      [data.y24[i], data.y22[i]].forEach(function (v) {
+        if (v == null) return;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      });
+    }
+    if (min === Infinity) return null;
+    var pad = (max - min) * 0.08 || max * 0.01;
+    return [min - pad, max + pad];
+  }
+
+  // ---------- stats header ----------
+  function updateStats(lo, hi) {
+    function one(series, vId, dId) {
+      var latestIdx = lastValid(series);
+      el(vId).textContent = latestIdx >= 0 ? "₹" + fmtINR.format(series[latestIdx]) : "N/A";
+      // change across the visible window: first valid point in window -> last valid point in window
+      var first = -1, last = -1;
+      for (var i = 0; i < data.t.length; i++) {
+        if (data.t[i] < lo || data.t[i] > hi || series[i] == null) continue;
+        if (first < 0) first = i;
+        last = i;
+      }
+      var d = el(dId);
+      if (first < 0 || first === last) { d.innerHTML = "&nbsp;"; return; }
+      var diff = series[last] - series[first];
+      var pct = series[first] ? (diff / series[first]) * 100 : 0;
+      var cls = diff > 0 ? "up" : diff < 0 ? "down" : "";
+      var arrow = diff > 0 ? "▲" : diff < 0 ? "▼" : "–";
+      var sign = diff > 0 ? "+" : diff < 0 ? "−" : "";
+      d.innerHTML = '<span class="' + cls + '">' + arrow + " " + sign + "₹" + fmtINR.format(Math.abs(diff)) +
+        " (" + sign + Math.abs(pct).toFixed(2) + "%)</span> since " + fmtShort.format(new Date(data.t[first]));
+    }
+    one(data.y24, "v24", "d24");
+    one(data.y22, "v22", "d22");
+  }
+
+  // ---------- chart ----------
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function themeLayout() {
+    return {
+      "paper_bgcolor": css("--surface"),
+      "plot_bgcolor": css("--surface"),
+      "font.color": css("--text"),
+      "xaxis.gridcolor": css("--grid"),
+      "yaxis.gridcolor": css("--grid"),
+      "xaxis.rangeslider.bgcolor": css("--bg"),
+      "xaxis.rangeslider.bordercolor": css("--border"),
+      "hoverlabel.bgcolor": css("--bg"),
+      "hoverlabel.bordercolor": css("--border"),
+      "hoverlabel.font.color": css("--text")
+    };
+  }
+
+  function draw() {
+    var win = windowFor(DEFAULT_PERIOD);
+    var yr = yRange(win[0], win[1]);
+    var common = {
+      type: "scatter", mode: "lines+markers", connectgaps: false, x: data.x,
+      marker: { size: 4 }, line: { width: 2.2 },
+      hovertemplate: "₹%{y:,.0f}<extra>%{fullData.name}</extra>"
+    };
+    var traces = [
+      Object.assign({}, common, { name: "24ct", y: data.y24, line: { width: 2.2, color: css("--c24") }, marker: { size: 4, color: css("--c24") } }),
+      Object.assign({}, common, { name: "22ct", y: data.y22, line: { width: 2.2, color: css("--c22") }, marker: { size: 4, color: css("--c22") } })
+    ];
+    var layout = {
+      margin: { l: 64, r: 16, t: 8, b: 40 },
+      hovermode: "x unified",
+      hoverdistance: -1,
+      legend: { orientation: "h", x: 0, y: 1.08 },
+      xaxis: {
+        type: "date",
+        range: [toStr(win[0]), toStr(win[1])],
+        hoverformat: "%d %b %Y, %H:%M",
+        rangeslider: { range: [data.x[0], data.x[data.x.length - 1]], thickness: 0.14, yaxis: { rangemode: "auto" } }
+      },
+      yaxis: { range: yr, fixedrange: true, tickprefix: "₹", tickformat: ",.0f" }
+    };
+    var config = {
+      responsive: true, displaylogo: false,
+      modeBarButtonsToRemove: ["select2d", "lasso2d", "autoScale2d"]
+    };
+    el("status").hidden = true;
+    chartDiv.hidden = false;
+    Plotly.newPlot(chartDiv, traces, layout, config).then(function () {
+      Plotly.relayout(chartDiv, themeLayout());
+      chartDiv.on("plotly_relayout", onRelayout);
+    });
+    updateStats(win[0], win[1]);
+    setActive(DEFAULT_PERIOD);
+  }
+
+  function setActive(p) {
+    Array.prototype.forEach.call(el("periods").querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.p === p));
+    });
+  }
+
+  function applyWindow(lo, hi) {
+    var yr = yRange(lo, hi);
+    internalUpdate = true;
+    var upd = { "xaxis.range": [toStr(lo), toStr(hi)] };
+    if (yr) upd["yaxis.range"] = yr;
+    Plotly.relayout(chartDiv, upd).then(function () { internalUpdate = false; }, function () { internalUpdate = false; });
+    updateStats(lo, hi);
+  }
+
+  // Zoom / slider / double-click-reset made by the user: refit y and refresh stats.
+  function onRelayout(ev) {
+    if (internalUpdate) return;
+    var lo, hi;
+    if (ev["xaxis.autorange"]) {
+      lo = data.t[0]; hi = data.t[data.t.length - 1];
+    } else if (ev["xaxis.range[0]"] != null && ev["xaxis.range[1]"] != null) {
+      lo = Date.parse(String(ev["xaxis.range[0]"]).replace(" ", "T").slice(0, 19) + "Z");
+      hi = Date.parse(String(ev["xaxis.range[1]"]).replace(" ", "T").slice(0, 19) + "Z");
+    } else if (ev["xaxis.range"]) {
+      lo = Date.parse(String(ev["xaxis.range"][0]).replace(" ", "T").slice(0, 19) + "Z");
+      hi = Date.parse(String(ev["xaxis.range"][1]).replace(" ", "T").slice(0, 19) + "Z");
+    } else { return; }
+    if (isNaN(lo) || isNaN(hi)) return;
+    setActive(null);
+    applyWindow(lo, hi);
+  }
+
+  el("periods").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b || chartDiv.hidden) return;
+    var w = windowFor(b.dataset.p);
+    setActive(b.dataset.p);
+    applyWindow(w[0], w[1]);
+  });
+
+  if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      if (chartDiv.hidden) return;
+      Plotly.restyle(chartDiv, { "line.color": [css("--c24"), css("--c22")], "marker.color": [css("--c24"), css("--c22")] });
+      Plotly.relayout(chartDiv, themeLayout());
+    });
+  }
+
+  // ---------- boot ----------
+  function fail(msg) {
+    var s = el("status");
+    s.className = "error";
+    s.textContent = msg;
+  }
+
+  if (typeof Plotly === "undefined") {
+    fail("The charting library failed to load. Check your connection and reload.");
+    return;
+  }
+  load().then(function (d) {
+    data = d;
+    var li = data.t.length - 1;
+    el("asof").textContent = "Last updated " + fmtLong.format(new Date(data.t[li])) + " IST.";
+    draw();
+  }).catch(function () {
+    fail("Could not load the rates data. Please try again later.");
+  });
+})();
+</script>
+</body>
+</html>
