@@ -103,7 +103,8 @@
 
   <div class="periods" id="periods" role="group" aria-label="Chart period">
     <span>Period</span>
-    <button type="button" data-p="10d" aria-pressed="true">10 days</button>
+    <button type="button" data-p="5d" aria-pressed="true">5 days</button>
+    <button type="button" data-p="10d" aria-pressed="false">10 days</button>
     <button type="button" data-p="1m" aria-pressed="false">1 month</button>
     <button type="button" data-p="3m" aria-pressed="false">3 months</button>
     <button type="button" data-p="ytd" aria-pressed="false">Year to date</button>
@@ -128,7 +129,7 @@
     "https://raw.githubusercontent.com/syamchandnair/goldie/main/gold_rates.csv",
     "gold_rates.csv"
   ];
-  var DEFAULT_PERIOD = "10d";
+  var DEFAULT_PERIOD = "5d";
   var DAY = 86400000;
 
   var el = function (id) { return document.getElementById(id); };
@@ -186,7 +187,8 @@
   function windowFor(period) {
     var end = data.t[data.t.length - 1], start = data.t[0];
     var d = new Date(end);
-    if (period === "10d") start = end - 10 * DAY;
+    if (period === "5d") start = end - 5 * DAY;
+    else if (period === "10d") start = end - 10 * DAY;
     else if (period === "1m") start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
     else if (period === "3m") start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 3, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
     else if (period === "ytd") start = Date.UTC(d.getUTCFullYear(), 0, 1);
