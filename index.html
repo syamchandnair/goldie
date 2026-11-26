@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gold Rate Tracker</title>
-<meta name="description" content="Interactive chart of 24ct and 22ct gold rates collected from pngjewellers.com.">
+<meta name="description" content="Interactive chart of 24ct and 22ct gold rates">
 <style>
   :root {
     --bg: #fafaf7;
@@ -103,6 +103,7 @@
 
   <div class="periods" id="periods" role="group" aria-label="Chart period">
     <span>Period</span>
+    <button type="button" data-p="10d" aria-pressed="true">5 days</button>
     <button type="button" data-p="10d" aria-pressed="true">10 days</button>
     <button type="button" data-p="1m" aria-pressed="false">1 month</button>
     <button type="button" data-p="3m" aria-pressed="false">3 months</button>
@@ -128,7 +129,7 @@
     "https://raw.githubusercontent.com/syamchandnair/goldie/main/gold_rates.csv",
     "gold_rates.csv"
   ];
-  var DEFAULT_PERIOD = "10d";
+  var DEFAULT_PERIOD = "5d";
   var DAY = 86400000;
 
   var el = function (id) { return document.getElementById(id); };
