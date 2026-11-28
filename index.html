@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gold Rate Tracker</title>
-<meta name="description" content="Interactive chart of 24ct and 22ct gold rates collected from pngjewellers.com.">
+<meta name="description" content="Interactive charts of 24ct and 22ct gold rates: PNG Jewellers retail rates and international spot prices.">
 <style>
   :root {
     --bg: #fafaf7;
@@ -42,9 +42,22 @@
     font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   main { max-width: 1000px; margin: 0 auto; padding: 24px 16px 40px; }
-  h1 { font-size: 1.5rem; margin: 0 0 4px; }
-  .sub { color: var(--muted); margin: 0 0 20px; font-size: .9rem; }
-  .sub a { color: inherit; }
+  h1 { font-size: 1.5rem; margin: 0 0 12px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: .9rem; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 0 0 16px; overflow-x: auto; }
+  .tabs button {
+    font: inherit; background: none; border: 0; border-bottom: 3px solid transparent;
+    padding: 10px 14px; min-height: 44px; color: var(--muted); cursor: pointer; white-space: nowrap;
+  }
+  .tabs button:hover { color: var(--text); }
+  .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  .note {
+    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 10px 12px; font-size: .85rem; color: var(--muted); margin: 0 0 16px;
+  }
 
   .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px; }
   .stat {
@@ -74,19 +87,19 @@
   .periods button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
   .periods button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  #chart-wrap {
+  .chart-wrap {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 8px;
     position: relative;
   }
-  #chart { width: 100%; height: 480px; }
-  #status { padding: 40px 16px; text-align: center; color: var(--muted); }
-  #status.error { color: var(--down); }
+  .chart { width: 100%; height: 480px; }
+  .status { padding: 40px 16px; text-align: center; color: var(--muted); }
+  .status.error { color: var(--down); }
   .hint { color: var(--muted); font-size: .8rem; margin-top: 8px; }
   @media (max-width: 520px) {
-    #chart { height: 400px; }
+    .chart { height: 400px; }
     .stat .value { font-size: 1.35rem; }
   }
 </style>
@@ -94,150 +107,73 @@
 <body>
 <main>
   <h1>Gold Rate Tracker</h1>
-  <p class="sub">24ct and 22ct rates (₹) from pngjewellers.com. <span id="asof"></span></p>
+
+  <div class="tabs" id="tabs" role="tablist" aria-label="Data source"></div>
+  <div id="panels"></div>
+</main>
+
+<template id="panel-tpl">
+  <p class="sub"><span class="blurb"></span> <span class="asof"></span></p>
+  <p class="note" hidden></p>
 
   <section class="stats" aria-live="polite" aria-label="Latest rates">
-    <div class="stat c24"><div class="label">24ct</div><div class="value" id="v24">–</div><div class="delta" id="d24">&nbsp;</div></div>
-    <div class="stat c22"><div class="label">22ct</div><div class="value" id="v22">–</div><div class="delta" id="d22">&nbsp;</div></div>
+    <div class="stat c24"><div class="label">24ct</div><div class="value v24">–</div><div class="delta d24">&nbsp;</div></div>
+    <div class="stat c22"><div class="label">22ct</div><div class="value v22">–</div><div class="delta d22">&nbsp;</div></div>
   </section>
 
-  <div class="periods" id="periods" role="group" aria-label="Chart period">
-    <span>Period</span>
-    <button type="button" data-p="5d" aria-pressed="true">5 days</button>
-    <button type="button" data-p="10d" aria-pressed="false">10 days</button>
-    <button type="button" data-p="1m" aria-pressed="false">1 month</button>
-    <button type="button" data-p="3m" aria-pressed="false">3 months</button>
-    <button type="button" data-p="ytd" aria-pressed="false">Year to date</button>
-    <button type="button" data-p="all" aria-pressed="false">All</button>
-  </div>
+  <div class="periods" role="group" aria-label="Chart period"><span>Period</span></div>
 
-  <div id="chart-wrap">
-    <div id="status">Loading rates…</div>
-    <div id="chart" hidden></div>
+  <div class="chart-wrap">
+    <div class="status">Loading rates…</div>
+    <div class="chart" hidden></div>
   </div>
   <p class="hint">Drag on the chart to zoom, drag the slider below it to pan, double-click to reset to all data.</p>
-</main>
+</template>
 
 <script src="https://cdn.plot.ly/plotly-basic-2.35.2.min.js" integrity="sha384-wQ3lfCxuvLfhHGiSdHF5+e3NZ1zNwEMd8/nII+K7VKChF9llO/OwOcn/aVRkB7az" crossorigin="anonymous"></script>
 <script>
 (function () {
   "use strict";
 
-  // Tried in order. The raw URL is always current (no Pages rebuild needed) but only
-  // reachable from a browser if the repo is public; the relative path is the fallback.
-  var CSV_SOURCES = [
-    "https://raw.githubusercontent.com/syamchandnair/goldie/main/gold_rates.csv",
-    "gold_rates.csv"
-  ];
-  var DEFAULT_PERIOD = "5d";
+  // Each CSV URL list is tried in order. The raw URL is always current (no Pages rebuild needed)
+  // but only reachable from a browser if the repo is public; the relative path is the fallback.
+  var RAW = "https://raw.githubusercontent.com/syamchandnair/goldie/main/";
   var DAY = 86400000;
 
-  var el = function (id) { return document.getElementById(id); };
   var fmtINR = new Intl.NumberFormat("en-IN");
   var fmtShort = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
   var fmtLong = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
 
-  var data = { t: [], x: [], y24: [], y22: [] };   // t = ms (IST wall-clock treated as UTC), x = "YYYY-MM-DD HH:MM:SS"
-  var chartDiv = el("chart");
-  var internalUpdate = false;                       // true while we call relayout ourselves
-
-  // ---------- data ----------
-  function toStr(ms) { return new Date(ms).toISOString().slice(0, 19).replace("T", " "); }
-
-  function parseCSV(text) {
-    var out = { t: [], x: [], y24: [], y22: [] };
-    var lines = text.split(/\r?\n/);
-    for (var i = 1; i < lines.length; i++) {          // line 0 is the header
-      var line = lines[i].trim();
-      if (!line) continue;
-      var f = line.split(",");
-      // "2026-11-21 20:46:15 IST" -> wall-clock string; no timezone conversion on purpose
-      var ts = (f[0] || "").replace(/\s*IST\s*$/, "").trim();
-      var ms = Date.parse(ts.replace(" ", "T") + "Z");
-      if (isNaN(ms)) continue;
-      var a = parseFloat(f[1]), b = parseFloat(f[2]);  // "N/A" -> NaN -> gap
-      out.t.push(ms);
-      out.x.push(ts);
-      out.y24.push(isNaN(a) ? null : a);
-      out.y22.push(isNaN(b) ? null : b);
+  var SOURCES = [
+    {
+      id: "png",
+      tab: "PNG Jewellers",
+      csv: [RAW + "gold_rates.csv", "gold_rates.csv"],
+      blurb: "24ct and 22ct rates (₹) from pngjewellers.com.",
+      note: "",
+      periods: [["5d", "5 days"], ["10d", "10 days"], ["1m", "1 month"], ["3m", "3 months"], ["ytd", "Year to date"], ["all", "All"]],
+      defaultPeriod: "5d",
+      hoverFormat: "%d %b %Y, %H:%M",
+      asof: function (d) { return "Last updated " + fmtLong.format(new Date(d.t[d.t.length - 1])) + " IST."; }
+    },
+    {
+      id: "spot",
+      tab: "Spot (GoldAPI)",
+      csv: [RAW + "gold_api_rates.csv", "gold_api_rates.csv"],
+      blurb: "International spot gold in ₹ per gram, from GoldAPI.io; 22ct is 24ct × 22/24.",
+      note: "Spot prices exclude import duty, GST and jeweller premiums, so they run below PNG's retail rates. " +
+            "This is a one-off one-year snapshot and is not updated automatically.",
+      periods: [["1m", "1 month"], ["3m", "3 months"], ["6m", "6 months"], ["ytd", "Year to date"], ["all", "1 year"]],
+      defaultPeriod: "all",
+      hoverFormat: "%d %b %Y",
+      asof: function (d) { return "Daily prices, " + fmtShort.format(new Date(d.t[0])) + " – " + fmtShort.format(new Date(d.t[d.t.length - 1])) + "."; }
     }
-    return out;
-  }
+  ];
 
-  function load() {
-    var i = 0;
-    function next() {
-      if (i >= CSV_SOURCES.length) return Promise.reject(new Error("Could not load gold_rates.csv"));
-      var url = CSV_SOURCES[i++];
-      return fetch(url, { cache: "no-cache" })
-        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
-        .then(function (txt) {
-          var d = parseCSV(txt);
-          if (!d.t.length) throw new Error("empty");
-          return d;
-        })
-        .catch(next);
-    }
-    return next();
-  }
-
-  // ---------- helpers on the visible window ----------
-  function lastValid(arr) { for (var i = arr.length - 1; i >= 0; i--) if (arr[i] != null) return i; return -1; }
-
-  function windowFor(period) {
-    var end = data.t[data.t.length - 1], start = data.t[0];
-    var d = new Date(end);
-    if (period === "5d") start = end - 5 * DAY;
-    else if (period === "10d") start = end - 10 * DAY;
-    else if (period === "1m") start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
-    else if (period === "3m") start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 3, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
-    else if (period === "ytd") start = Date.UTC(d.getUTCFullYear(), 0, 1);
-    return [Math.max(start, data.t[0]), end];
-  }
-
-  function yRange(lo, hi) {
-    var min = Infinity, max = -Infinity;
-    for (var i = 0; i < data.t.length; i++) {
-      if (data.t[i] < lo || data.t[i] > hi) continue;
-      [data.y24[i], data.y22[i]].forEach(function (v) {
-        if (v == null) return;
-        if (v < min) min = v;
-        if (v > max) max = v;
-      });
-    }
-    if (min === Infinity) return null;
-    var pad = (max - min) * 0.08 || max * 0.01;
-    return [min - pad, max + pad];
-  }
-
-  // ---------- stats header ----------
-  function updateStats(lo, hi) {
-    function one(series, vId, dId) {
-      var latestIdx = lastValid(series);
-      el(vId).textContent = latestIdx >= 0 ? "₹" + fmtINR.format(series[latestIdx]) : "N/A";
-      // change across the visible window: first valid point in window -> last valid point in window
-      var first = -1, last = -1;
-      for (var i = 0; i < data.t.length; i++) {
-        if (data.t[i] < lo || data.t[i] > hi || series[i] == null) continue;
-        if (first < 0) first = i;
-        last = i;
-      }
-      var d = el(dId);
-      if (first < 0 || first === last) { d.innerHTML = "&nbsp;"; return; }
-      var diff = series[last] - series[first];
-      var pct = series[first] ? (diff / series[first]) * 100 : 0;
-      var cls = diff > 0 ? "up" : diff < 0 ? "down" : "";
-      var arrow = diff > 0 ? "▲" : diff < 0 ? "▼" : "–";
-      var sign = diff > 0 ? "+" : diff < 0 ? "−" : "";
-      d.innerHTML = '<span class="' + cls + '">' + arrow + " " + sign + "₹" + fmtINR.format(Math.abs(diff)) +
-        " (" + sign + Math.abs(pct).toFixed(2) + "%)</span> since " + fmtShort.format(new Date(data.t[first]));
-    }
-    one(data.y24, "v24", "d24");
-    one(data.y22, "v22", "d22");
-  }
-
-  // ---------- chart ----------
   function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function toStr(ms) { return new Date(ms).toISOString().slice(0, 19).replace("T", " "); }
+  function lastValid(arr) { for (var i = arr.length - 1; i >= 0; i--) if (arr[i] != null) return i; return -1; }
+  function parseWall(s) { return Date.parse(String(s).replace(" ", "T").slice(0, 19) + "Z"); }
 
   function themeLayout() {
     return {
@@ -254,113 +190,293 @@
     };
   }
 
-  function draw() {
-    var win = windowFor(DEFAULT_PERIOD);
-    var yr = yRange(win[0], win[1]);
-    var common = {
-      type: "scatter", mode: "lines+markers", connectgaps: false, x: data.x,
-      marker: { size: 4 }, line: { shape: "spline", smoothing: 1, width: 2.2 },
-      hovertemplate: "₹%{y:,.0f}<extra>%{fullData.name}</extra>"
-    };
-    var traces = [
-      Object.assign({}, common, { name: "24ct", y: data.y24, line: { shape: "spline", smoothing: 1, width: 2.2, color: css("--c24") }, marker: { size: 4, color: css("--c24") } }),
-      Object.assign({}, common, { name: "22ct", y: data.y22, line: { shape: "spline", smoothing: 1, width: 2.2, color: css("--c22") }, marker: { size: 4, color: css("--c22") } })
-    ];
-    var layout = {
-      margin: { l: 64, r: 16, t: 8, b: 40 },
-      hovermode: "x unified",
-      hoverdistance: -1,
-      legend: { orientation: "h", x: 0, y: 1.08 },
-      xaxis: {
-        type: "date",
-        range: [toStr(win[0]), toStr(win[1])],
-        hoverformat: "%d %b %Y, %H:%M",
-        rangeslider: { range: [data.x[0], data.x[data.x.length - 1]], thickness: 0.14, yaxis: { rangemode: "auto" } }
+  // One view = one tab: its own data, stats, period buttons and chart.
+  function createView(cfg, root) {
+    var q = function (sel) { return root.querySelector(sel); };
+    var chartDiv = q(".chart");
+    var data = { t: [], x: [], y24: [], y22: [] };   // t = ms (wall-clock treated as UTC), x = "YYYY-MM-DD HH:MM:SS"
+    var internalUpdate = false;                       // true while we call relayout ourselves
+    var started = false, drawn = false;
+
+    q(".blurb").textContent = cfg.blurb;
+    if (cfg.note) { var n = q(".note"); n.textContent = cfg.note; n.hidden = false; }
+
+    var periodsEl = q(".periods");
+    cfg.periods.forEach(function (p) {
+      var b = document.createElement("button");
+      b.type = "button"; b.dataset.p = p[0]; b.textContent = p[1];
+      b.setAttribute("aria-pressed", String(p[0] === cfg.defaultPeriod));
+      periodsEl.appendChild(b);
+    });
+
+    // ---------- data ----------
+    function parseCSV(text) {
+      var out = { t: [], x: [], y24: [], y22: [] };
+      var lines = text.split(/\r?\n/);
+      for (var i = 1; i < lines.length; i++) {          // line 0 is the header
+        var line = lines[i].trim();
+        if (!line) continue;
+        var f = line.split(",");
+        // "2026-11-21 20:46:15 IST" or "2026-11-21" -> wall-clock string; no timezone conversion on purpose
+        var ts = (f[0] || "").replace(/\s*IST\s*$/, "").trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(ts)) ts += " 00:00:00";
+        var ms = parseWall(ts);
+        if (isNaN(ms)) continue;
+        var a = parseFloat(f[1]), b = parseFloat(f[2]);  // "N/A" -> NaN -> gap
+        out.t.push(ms);
+        out.x.push(ts);
+        out.y24.push(isNaN(a) ? null : a);
+        out.y22.push(isNaN(b) ? null : b);
+      }
+      return out;
+    }
+
+    function load() {
+      var i = 0;
+      function next() {
+        if (i >= cfg.csv.length) return Promise.reject(new Error("Could not load CSV"));
+        var url = cfg.csv[i++];
+        return fetch(url, { cache: "no-cache" })
+          .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+          .then(function (txt) {
+            var d = parseCSV(txt);
+            if (!d.t.length) throw new Error("empty");
+            return d;
+          })
+          .catch(next);
+      }
+      return next();
+    }
+
+    // ---------- helpers on the visible window ----------
+    function windowFor(period) {
+      var end = data.t[data.t.length - 1], start = data.t[0];
+      var d = new Date(end);
+      function monthsBack(n) {
+        return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - n, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
+      }
+      if (period === "5d") start = end - 5 * DAY;
+      else if (period === "10d") start = end - 10 * DAY;
+      else if (period === "1m") start = monthsBack(1);
+      else if (period === "3m") start = monthsBack(3);
+      else if (period === "6m") start = monthsBack(6);
+      else if (period === "ytd") start = Date.UTC(d.getUTCFullYear(), 0, 1);
+      return [Math.max(start, data.t[0]), end];
+    }
+
+    function yRange(lo, hi) {
+      var min = Infinity, max = -Infinity;
+      for (var i = 0; i < data.t.length; i++) {
+        if (data.t[i] < lo || data.t[i] > hi) continue;
+        [data.y24[i], data.y22[i]].forEach(function (v) {
+          if (v == null) return;
+          if (v < min) min = v;
+          if (v > max) max = v;
+        });
+      }
+      if (min === Infinity) return null;
+      var pad = (max - min) * 0.08 || max * 0.01;
+      return [min - pad, max + pad];
+    }
+
+    // ---------- stats header ----------
+    function updateStats(lo, hi) {
+      function one(series, vSel, dSel) {
+        var latestIdx = lastValid(series);
+        q(vSel).textContent = latestIdx >= 0 ? "₹" + fmtINR.format(Math.round(series[latestIdx])) : "N/A";
+        // change across the visible window: first valid point in window -> last valid point in window
+        var first = -1, last = -1;
+        for (var i = 0; i < data.t.length; i++) {
+          if (data.t[i] < lo || data.t[i] > hi || series[i] == null) continue;
+          if (first < 0) first = i;
+          last = i;
+        }
+        var d = q(dSel);
+        if (first < 0 || first === last) { d.innerHTML = "&nbsp;"; return; }
+        var diff = series[last] - series[first];
+        var pct = series[first] ? (diff / series[first]) * 100 : 0;
+        var cls = diff > 0 ? "up" : diff < 0 ? "down" : "";
+        var arrow = diff > 0 ? "▲" : diff < 0 ? "▼" : "–";
+        var sign = diff > 0 ? "+" : diff < 0 ? "−" : "";
+        d.innerHTML = '<span class="' + cls + '">' + arrow + " " + sign + "₹" + fmtINR.format(Math.round(Math.abs(diff))) +
+          " (" + sign + Math.abs(pct).toFixed(2) + "%)</span> since " + fmtShort.format(new Date(data.t[first]));
+      }
+      one(data.y24, ".v24", ".d24");
+      one(data.y22, ".v22", ".d22");
+    }
+
+    // ---------- chart ----------
+    function setActive(p) {
+      Array.prototype.forEach.call(periodsEl.querySelectorAll("button"), function (b) {
+        b.setAttribute("aria-pressed", String(b.dataset.p === p));
+      });
+    }
+
+    function applyWindow(lo, hi) {
+      var yr = yRange(lo, hi);
+      internalUpdate = true;
+      var upd = { "xaxis.range": [toStr(lo), toStr(hi)] };
+      if (yr) upd["yaxis.range"] = yr;
+      Plotly.relayout(chartDiv, upd).then(function () { internalUpdate = false; }, function () { internalUpdate = false; });
+      updateStats(lo, hi);
+    }
+
+    // Zoom / slider / double-click-reset made by the user: refit y and refresh stats.
+    function onRelayout(ev) {
+      if (internalUpdate) return;
+      var lo, hi;
+      if (ev["xaxis.autorange"]) {
+        lo = data.t[0]; hi = data.t[data.t.length - 1];
+      } else if (ev["xaxis.range[0]"] != null && ev["xaxis.range[1]"] != null) {
+        lo = parseWall(ev["xaxis.range[0]"]);
+        hi = parseWall(ev["xaxis.range[1]"]);
+      } else if (ev["xaxis.range"]) {
+        lo = parseWall(ev["xaxis.range"][0]);
+        hi = parseWall(ev["xaxis.range"][1]);
+      } else { return; }
+      if (isNaN(lo) || isNaN(hi)) return;
+      setActive(null);
+      applyWindow(lo, hi);
+    }
+
+    function draw() {
+      var win = windowFor(cfg.defaultPeriod);
+      var yr = yRange(win[0], win[1]);
+      function trace(name, y, color) {
+        return {
+          type: "scatter", mode: "lines+markers", connectgaps: false, x: data.x, y: y, name: name,
+          line: { shape: "spline", smoothing: 1, width: 2.2, color: color },
+          marker: { size: 4, color: color },
+          hovertemplate: "₹%{y:,.0f}<extra>%{fullData.name}</extra>"
+        };
+      }
+      var traces = [trace("24ct", data.y24, css("--c24")), trace("22ct", data.y22, css("--c22"))];
+      var layout = {
+        margin: { l: 64, r: 16, t: 8, b: 40 },
+        hovermode: "x unified",
+        hoverdistance: -1,
+        legend: { orientation: "h", x: 0, y: 1.08 },
+        xaxis: {
+          type: "date",
+          range: [toStr(win[0]), toStr(win[1])],
+          hoverformat: cfg.hoverFormat,
+          rangeslider: { range: [data.x[0], data.x[data.x.length - 1]], thickness: 0.14, yaxis: { rangemode: "auto" } }
+        },
+        yaxis: { range: yr, fixedrange: true, tickprefix: "₹", tickformat: ",.0f" }
+      };
+      var config = {
+        responsive: true, displaylogo: false,
+        modeBarButtonsToRemove: ["select2d", "lasso2d", "autoScale2d"]
+      };
+      q(".status").hidden = true;
+      chartDiv.hidden = false;
+      drawn = true;
+      Plotly.newPlot(chartDiv, traces, layout, config).then(function () {
+        Plotly.relayout(chartDiv, themeLayout());
+        chartDiv.on("plotly_relayout", onRelayout);
+      });
+      updateStats(win[0], win[1]);
+      setActive(cfg.defaultPeriod);
+    }
+
+    function fail(msg) {
+      var s = q(".status");
+      s.hidden = false;
+      s.className = "status error";
+      s.textContent = msg;
+    }
+
+    periodsEl.addEventListener("click", function (e) {
+      var b = e.target.closest("button");
+      if (!b || !drawn) return;
+      var w = windowFor(b.dataset.p);
+      setActive(b.dataset.p);
+      applyWindow(w[0], w[1]);
+    });
+
+    return {
+      // Called whenever the tab is shown. Data loads and the chart draws on first show only,
+      // so Plotly never measures a hidden (zero-width) container.
+      show: function () {
+        if (started) { if (drawn) Plotly.Plots.resize(chartDiv); return; }
+        started = true;
+        if (typeof Plotly === "undefined") {
+          fail("The charting library failed to load. Check your connection and reload.");
+          return;
+        }
+        load().then(function (d) {
+          data = d;
+          q(".asof").textContent = cfg.asof(data);
+          draw();
+        }).catch(function () {
+          fail("Could not load the rates data. Please try again later.");
+        });
       },
-      yaxis: { range: yr, fixedrange: true, tickprefix: "₹", tickformat: ",.0f" }
+      retheme: function () {
+        if (!drawn) return;
+        Plotly.restyle(chartDiv, { "line.color": [css("--c24"), css("--c22")], "marker.color": [css("--c24"), css("--c22")] });
+        Plotly.relayout(chartDiv, themeLayout());
+      }
     };
-    var config = {
-      responsive: true, displaylogo: false,
-      modeBarButtonsToRemove: ["select2d", "lasso2d", "autoScale2d"]
-    };
-    el("status").hidden = true;
-    chartDiv.hidden = false;
-    Plotly.newPlot(chartDiv, traces, layout, config).then(function () {
-      Plotly.relayout(chartDiv, themeLayout());
-      chartDiv.on("plotly_relayout", onRelayout);
+  }
+
+  // ---------- tabs ----------
+  var tabsEl = document.getElementById("tabs");
+  var panelsEl = document.getElementById("panels");
+  var tpl = document.getElementById("panel-tpl");
+  var items = SOURCES.map(function (cfg) {
+    var tab = document.createElement("button");
+    tab.type = "button"; tab.id = "tab-" + cfg.id; tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-controls", "panel-" + cfg.id);
+    tab.textContent = cfg.tab;
+    tabsEl.appendChild(tab);
+
+    var panel = document.createElement("div");
+    panel.id = "panel-" + cfg.id; panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", tab.id);
+    panel.hidden = true;
+    panel.appendChild(tpl.content.cloneNode(true));
+    panelsEl.appendChild(panel);
+
+    return { cfg: cfg, tab: tab, panel: panel, view: createView(cfg, panel) };
+  });
+
+  function select(index, focus) {
+    items.forEach(function (it, i) {
+      var on = i === index;
+      it.tab.setAttribute("aria-selected", String(on));
+      it.tab.tabIndex = on ? 0 : -1;
+      it.panel.hidden = !on;
     });
-    updateStats(win[0], win[1]);
-    setActive(DEFAULT_PERIOD);
+    if (focus) items[index].tab.focus();
+    items[index].view.show();
+    try { history.replaceState(null, "", "#" + items[index].cfg.id); } catch (e) { /* ignore */ }
   }
 
-  function setActive(p) {
-    Array.prototype.forEach.call(el("periods").querySelectorAll("button"), function (b) {
-      b.setAttribute("aria-pressed", String(b.dataset.p === p));
+  items.forEach(function (it, i) {
+    it.tab.addEventListener("click", function () { select(i, false); });
+    it.tab.addEventListener("keydown", function (e) {
+      var n = items.length, j = null;
+      if (e.key === "ArrowRight") j = (i + 1) % n;
+      else if (e.key === "ArrowLeft") j = (i - 1 + n) % n;
+      else if (e.key === "Home") j = 0;
+      else if (e.key === "End") j = n - 1;
+      if (j === null) return;
+      e.preventDefault();
+      select(j, true);
     });
-  }
-
-  function applyWindow(lo, hi) {
-    var yr = yRange(lo, hi);
-    internalUpdate = true;
-    var upd = { "xaxis.range": [toStr(lo), toStr(hi)] };
-    if (yr) upd["yaxis.range"] = yr;
-    Plotly.relayout(chartDiv, upd).then(function () { internalUpdate = false; }, function () { internalUpdate = false; });
-    updateStats(lo, hi);
-  }
-
-  // Zoom / slider / double-click-reset made by the user: refit y and refresh stats.
-  function onRelayout(ev) {
-    if (internalUpdate) return;
-    var lo, hi;
-    if (ev["xaxis.autorange"]) {
-      lo = data.t[0]; hi = data.t[data.t.length - 1];
-    } else if (ev["xaxis.range[0]"] != null && ev["xaxis.range[1]"] != null) {
-      lo = Date.parse(String(ev["xaxis.range[0]"]).replace(" ", "T").slice(0, 19) + "Z");
-      hi = Date.parse(String(ev["xaxis.range[1]"]).replace(" ", "T").slice(0, 19) + "Z");
-    } else if (ev["xaxis.range"]) {
-      lo = Date.parse(String(ev["xaxis.range"][0]).replace(" ", "T").slice(0, 19) + "Z");
-      hi = Date.parse(String(ev["xaxis.range"][1]).replace(" ", "T").slice(0, 19) + "Z");
-    } else { return; }
-    if (isNaN(lo) || isNaN(hi)) return;
-    setActive(null);
-    applyWindow(lo, hi);
-  }
-
-  el("periods").addEventListener("click", function (e) {
-    var b = e.target.closest("button");
-    if (!b || chartDiv.hidden) return;
-    var w = windowFor(b.dataset.p);
-    setActive(b.dataset.p);
-    applyWindow(w[0], w[1]);
   });
 
   if (window.matchMedia) {
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
-      if (chartDiv.hidden) return;
-      Plotly.restyle(chartDiv, { "line.color": [css("--c24"), css("--c22")], "marker.color": [css("--c24"), css("--c22")] });
-      Plotly.relayout(chartDiv, themeLayout());
+      items.forEach(function (it) { it.view.retheme(); });
     });
   }
 
-  // ---------- boot ----------
-  function fail(msg) {
-    var s = el("status");
-    s.className = "error";
-    s.textContent = msg;
-  }
-
-  if (typeof Plotly === "undefined") {
-    fail("The charting library failed to load. Check your connection and reload.");
-    return;
-  }
-  load().then(function (d) {
-    data = d;
-    var li = data.t.length - 1;
-    el("asof").textContent = "Last updated " + fmtLong.format(new Date(data.t[li])) + " IST.";
-    draw();
-  }).catch(function () {
-    fail("Could not load the rates data. Please try again later.");
-  });
+  var wanted = location.hash.replace("#", "");
+  var start = 0;
+  items.forEach(function (it, i) { if (it.cfg.id === wanted) start = i; });
+  select(start, false);
 })();
 </script>
 </body>
